@@ -1,0 +1,5 @@
+# Register the host half. DSH loads this patch automatically when the package
+# is installed through `dsh plugin`, because package.json declares dsh.bundle.
+- insert:
+    - id: dsh-pets
+      name: dsh-pets
