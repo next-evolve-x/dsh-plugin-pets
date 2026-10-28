@@ -21,7 +21,11 @@ The plugin adds a floating pet layer to the DSH web app. Adopt pets from the pub
 
 ## Requirements
 
-- A DSH installation with the web profile available.
+- A DSH installation with a web UI: the `web` profile of the DSH CLI, or the
+  DeepSeek Harness desktop app, whose reserved `desktop` profile carries the same
+  web app.
+- A DSH version this bundle supports: `0.1.0-rc.x` and `0.2.x` (see
+  [Compatibility](#compatibility)).
 - A Node.js version supported by your DSH installation. The plugin itself has no runtime npm dependencies.
 - `pnpm` available on `PATH`; DSH delegates plugin installation and removal to it:
   ```sh
@@ -31,8 +35,8 @@ The plugin adds a floating pet layer to the DSH web app. Adopt pets from the pub
 
 ## Install
 
-Install the package into DSH's `web` profile. The commands below use `npx`, so
-they work without a globally installed `dsh` executable:
+Install the package into the DSH profile whose web UI you use. The commands
+below use `npx`, so they work without a globally installed `dsh` executable:
 
 ```sh
 # Local checkout
@@ -49,6 +53,25 @@ If `dsh` is globally installed, replace `npx @deepseek-ai/dsh` with `dsh`.
 The package declares a DSH bundle, so installation automatically adds its host
 entry to the web profile. No `cordis.patch.yml` edit is needed.
 
+### DSH Desktop
+
+The desktop app owns the reserved `desktop` profile, so install through the app's
+own plugin surface rather than a globally installed CLI:
+
+1. **Settings → Plugins** in the app, and install from a local path or a Git
+   address; the app runs pnpm for you and selects the bundle, or
+2. use the CLI bundled inside the app:
+
+   ```sh
+   "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" \
+     plugin --profile desktop add file:/absolute/path/to/dsh-pets
+   ```
+
+The plugin page applies the change to the running app; reload the window to pick
+up the browser half. A `dsh` installed from npm refuses `--profile desktop` by
+design ("managed exclusively by the Electron application"), so it cannot be used
+for this profile.
+
 If you installed an earlier version by manually adding a `dsh-pets` entry to
 `~/.dsh/profiles/web/cordis.patch.yml`, remove that legacy entry before
 restarting after the upgrade. The bundle now supplies the entry itself.
@@ -61,6 +84,27 @@ npx @deepseek-ai/dsh web
 
 Open the DSH web interface. A paw button appears in the lower-right corner before the first adoption. Click it to open the pet shop, choose a pet, and it becomes active immediately.
 
+## Compatibility
+
+The browser half reads the session catalog the harness hands to overlay slots,
+and that catalog changed shape in `0.2.0`:
+
+| Harness | Selected session | Background jobs |
+|---|---|---|
+| `0.1.0-rc.x` | `catalog.current` | `catalog.jobsBySession[id]` |
+| `0.2.x` | `catalog.byId` + `retainedBy.mainView` | `jobs` client service (`state` roster hook + `watchRows`) |
+
+One bundle supports both: every read goes through the guards in
+`lib/client.js` (exported as `__compat` for the smoke test), so a missing seat
+degrades the mood instead of throwing. Nothing in the overlay may throw:
+an exception inside a `shell.overlay` entry unmounts the whole pet layer, which
+is exactly what happened on the desktop app before 0.2.0 of this package
+(`0.1.x` asked for `catalog.jobsBySession[undefined]`, which no longer exists).
+
+The host half is unchanged between generations: `webServer.register({ kind:
+"prefix" })` plus the same-origin `/pets/*` routes work in both the CLI web
+profile and the desktop app.
+
 ## Uninstall
 
 Remove the installed package by its package name, not its GitHub spec:
@@ -68,6 +112,9 @@ Remove the installed package by its package name, not its GitHub spec:
 ```sh
 npx @deepseek-ai/dsh plugin --profile web remove dsh-pets
 ```
+
+For the desktop app, remove it from **Settings → Plugins** (or run the bundled
+CLI with `plugin --profile desktop remove dsh-pets`).
 
 The plugin manager automatically removes the bundle from the profile. Restart
 the web profile afterward. Only installations upgraded from an earlier manual
@@ -145,7 +192,17 @@ node test-host.mjs
 node test-client.mjs
 ```
 
-`test-host.mjs` expects locally prepared fixture files at `/tmp/agumon.zip` and `/tmp/codexpets_fresh.html`, then also exercises live gallery and installation requests. `test-client.mjs` expects the DSH web profile and its React dependencies to be installed.
+`test-host.mjs` downloads its own fixtures from `codexpets.net` and then exercises
+the ZIP reader, gallery scraping, install/remove, traversal guards, and the live
+gallery fetch. `test-client.mjs` materializes the browser bundle with the React
+pair the harness ships, renders the overlay against both session-catalog
+generations, and asserts the compatibility layer (exported as `__compat`) against
+junk input.
+
+Verifying a change end to end takes a page, not just a render: start the profile
+you target (`dsh --profile <name> --port 3030 --no-open`), then load it in a
+headless browser and look for `slot entry crashed in 'shell.overlay'` in the
+console. That message is the failure mode an overlay plugin has to stay clear of.
 
 ## Credits
 

@@ -177,6 +177,29 @@ dsh plugin --profile web add <spec>
 **旧版本迁移**：若用户曾手动把 `dsh-pets` 写入 `cordis.patch.yml`，升级到带
 bundle 的版本后，应删除那条旧 entry。保留它会让同一个宿主插件被配置两次。
 
+### 桌面版：`desktop` profile 由应用独占
+
+DSH Desktop 启动的是保留 profile `desktop`（`~/.dsh/profiles/desktop/`），
+它的插件同样按"依赖 + `dsh.profile.bundles`"装载，机制与 web profile 完全一致。
+区别只在**谁来改它**：
+
+- 应用内的"设置 → 插件"页面（背后是 `@deepseek-ai/dsh-plugin-manager` 服务）是
+  正规入口：装包、往 `dsh.profile.bundles` 追加条目、即时热应用都在同一个进程里完成；
+- 应用自带的 CLI 也允许管理它（`/Applications/DeepSeek Harness.app/Contents/
+  Resources/runtime/cli/bin/dsh plugin --profile desktop add <spec>`），因为它带着
+  `manageDesktopProfile` 标记启动；
+- 从 npm 全局安装的 `dsh` 会直接报
+  `profile "desktop" is managed exclusively by the Electron application`，
+  这是设计如此，不要指导用户绕过。
+
+桌面版还有两个和 web profile 不同的地方，分发时要交代清楚：
+
+1. **界面是同一个 Web app**（Electron 窗口加载 `http://127.0.0.1:<port>`），
+   所以同源 `/pets/*` 路由和 `/plugins/<包名>/client.js` 的加载方式与 web 端相同，
+   不需要为桌面版单独做 IPC 通道；
+2. **浏览器半边必须容忍 0.2 的会话目录结构**，否则整个悬浮层会被插槽的错误边界
+   卸载（见第 8 节）。这是 `0.2.0` 版本之前"桌面版装上完全没有反应"的根因。
+
 ---
 
 ## 6. 重启与验证
@@ -191,7 +214,12 @@ dsh web   # 重新启动 web profile（新插件条目在启动时才装载）
    ```sh
    dsh --profile web --dump-config | grep -A 3 "dsh-pets"
    ```
-   能看到 `id: dsh-pets` / `name: dsh-pets` 的行即正常。
+   能看到 `id: dsh-pets` / `name: dsh-pets` 的行即正常。桌面版把 `web` 换成
+   `desktop`，并且必须使用应用自带的 CLI（全局 `dsh` 会拒绝保留 profile）：
+   ```sh
+   "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" \
+     --profile desktop --dump-config | grep -A 3 "dsh-pets"
+   ```
 2. **包已装进 profile**：
    ```sh
    ls ~/.dsh/profiles/web/node_modules/dsh-pets   # 或 @your-scope/dsh-pets
@@ -240,6 +268,14 @@ dsh plugin --profile web remove dsh-pets
   其中任何一处不一致，插件要么不出现在图里，要么在页面报
   `bundle loaded without registering "<id>"`。改包名（比如发 npm 时加 scope）时
   要四处一起改。
+- **会话目录跨越两个版本**：浏览器半边拿到的"会话目录"在 DSH `0.2.0` 换过结构
+  （`0.1.x` 是 `{ current, byId, jobsBySession }`，`0.2.x` 是
+  `{ ids, byId, phase, projectionsBySession }`，当前会话改为由
+  `byId[id].retainedBy.mainView` 标记，后台任务改由 `jobs` 客户端服务提供）。
+  读取必须走兼容层，**并且不能在 `shell.overlay` 条目里抛异常**：插槽的错误边界
+  会卸载整个条目，表现就是"插件装了但界面上什么都没有"，而且不影响其他 UI，
+  所以很容易被误判成"没加载"。分发前用真实浏览器打开页面看控制台有没有
+  `slot entry crashed in 'shell.overlay'`。
 - **零依赖**：dsh-pets 的宿主半边只用 Node 内置模块，浏览器半边只 require 页面
   自带的 `react` / `react/jsx-runtime` 种子模块，其余能力（`webServer` 注入、
   `shell.overlay` 插槽）都由 DSH 提供——**对方不需要额外装任何依赖**，也不会有
@@ -261,6 +297,9 @@ dsh plugin --profile web remove dsh-pets
 |---|---|
 | `dsh: pnpm not found on PATH` | 对方没装 pnpm，先执行 `npm install -g pnpm`，再重新打开终端。 |
 | 装完重启后界面没有宠物 | 用 `--dump-config` 检查 `dsh-pets` 是否已在组合树里；旧版手动配置升级时确认已删除旧 entry |
+| 桌面版装完界面没有宠物 | ① 确认装的是 `desktop` profile 且 `dsh.profile.bundles` 里有 `dsh-pets`；② 确认插件版本 ≥ `0.2.0`——旧版读 0.1.x 的 `jobsBySession`，在 0.2 的会话目录上会抛错并被插槽错误边界整块卸载 |
+| `dsh plugin --profile desktop ...` 报 "managed exclusively by the Electron application" | 用了全局 npm 安装的 `dsh`；改用应用内"设置 → 插件"，或应用自带的 CLI |
+| 控制台有 `slot entry crashed in 'shell.overlay'` | 浏览器半边在渲染时抛异常（常见是会话目录字段不兼容）；按第 8 节检查兼容层 |
 | 页面报 `client-modules: bundle ... loaded without registering` | 命名不一致（见第 8 节"命名一致性"） |
 | `/plugins/dsh-pets/client.js` 404 | 包没被识别为 client 包：检查 `dsh.client.platform: "web"` 与 `exports["./client"]` |
 | 卸载后启动报找不到 `dsh-pets` | 这是旧版手动注册遗留的 `cordis.patch.yml` entry；按第 7 节删除它。 |

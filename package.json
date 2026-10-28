@@ -1,7 +1,7 @@
 {
   "name": "dsh-pets",
-  "version": "0.1.2",
-  "description": "Codex-style pets for DeepSeek Harness — animated spritesheet pets rendered in the web GUI, powered by the public codex-pets.net gallery.",
+  "version": "0.2.0",
+  "description": "Codex-style pets for DeepSeek Harness — animated spritesheet pets rendered in the web GUI and the DSH Desktop app, powered by the public codex-pets.net gallery.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

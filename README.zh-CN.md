@@ -21,7 +21,10 @@
 
 ## 前置条件
 
-- 已安装并可使用 Web profile 的 DSH。
+- 一个带 Web 界面的 DSH：DSH CLI 的 `web` profile，或 DeepSeek Harness 桌面版
+  （它运行保留的 `desktop` profile，界面与 Web 版相同）。
+- DSH 版本需在本插件支持范围内：`0.1.0-rc.x` 与 `0.2.x`（见
+  [版本兼容](#版本兼容)）。
 - 使用与当前 DSH 安装兼容的 Node.js 版本。插件本身没有运行时 npm 依赖。
 - `pnpm` 已加入 `PATH`；DSH 会通过它安装和移除插件：
   ```sh
@@ -31,8 +34,8 @@
 
 ## 安装
 
-将插件安装到 DSH 的 `web` profile。下面使用 `npx`，因此不需要全局安装
-`dsh` 可执行命令：
+把插件装进你实际使用的那一个 profile。下面使用 `npx`，因此不需要全局安装
+`dsh` 可执行命令（CLI Web 版对应 `web` profile）：
 
 ```sh
 # 本地项目目录
@@ -60,6 +63,42 @@ npx @deepseek-ai/dsh web
 
 打开 DSH Web 界面后，首次领养前右下角会显示一个爪印按钮。点击打开宠物商店，选择宠物后会立即安装并启用。
 
+### 桌面版（DSH Desktop 0.2.x）
+
+桌面版的 `desktop` profile 是应用独占的保留 profile，请通过应用自己的插件入口安装，
+不要用全局 npm 安装的 `dsh`：
+
+1. 在应用内打开 **设置 → 插件**，从本地路径或 Git 地址安装；应用会代跑 pnpm
+   并把该 bundle 选进 profile；或
+2. 使用应用自带的 CLI：
+
+   ```sh
+   "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" \
+     plugin --profile desktop add file:/absolute/path/to/dsh-pets
+   ```
+
+插件页的改动会即时作用到正在运行的应用；刷新窗口即可加载浏览器半边。
+从 npm 全局安装的 `dsh` 会直接拒绝 `--profile desktop`（提示该 profile
+"由 Electron 应用独占管理"），因此不能用来装这个 profile。
+
+## 版本兼容
+
+浏览器半边读取的是宿主交给插槽（slot）的会话目录，而 `0.2.0` 改了这个结构：
+
+| DSH 版本 | 当前会话 | 后台任务 |
+|---|---|---|
+| `0.1.0-rc.x` | `catalog.current` | `catalog.jobsBySession[id]` |
+| `0.2.x` | `catalog.byId` + `retainedBy.mainView` | `jobs` 客户端服务（`state` 名册 hook + `watchRows`） |
+
+同一份产物同时支持两种结构：`lib/client.js` 里所有读取都走兼容层（对测试导出为
+`__compat`），缺少某个 seat 时只会降级心情，不会抛错。悬浮层里的异常绝不能被
+忽略——`shell.overlay` 条目抛错会卸载整个宠物图层，这也正是本包 `0.2.0` 之前
+在桌面版里"完全不显示"的原因（旧代码访问 `catalog.jobsBySession[undefined]`，
+而 0.2 已经去掉了这个字段）。
+
+宿主半边在两代之间没有变化：`webServer.register({ kind: "prefix" })` 与同源
+`/pets/*` 路由在 CLI Web profile 和桌面版里都可用。
+
 ## 卸载
 
 卸载时传入包名，而不是 GitHub spec：
@@ -67,6 +106,9 @@ npx @deepseek-ai/dsh web
 ```sh
 npx @deepseek-ai/dsh plugin --profile web remove dsh-pets
 ```
+
+桌面版请在 **设置 → 插件** 中移除（或用自带 CLI 执行
+`plugin --profile desktop remove dsh-pets`）。
 
 插件管理器会自动从 profile 中移除 bundle，随后重启 Web profile 即可。只有从旧版
 手动配置升级的用户，才需要删除 `cordis.patch.yml` 中遗留的 `dsh-pets` 条目。
@@ -141,7 +183,15 @@ node test-host.mjs
 node test-client.mjs
 ```
 
-`test-host.mjs` 需要预先准备 `/tmp/agumon.zip` 和 `/tmp/codexpets_fresh.html` 两个本地 fixture 文件，之后还会请求线上图库和安装接口。`test-client.mjs` 需要已安装 DSH Web profile 及其 React 依赖。
+`test-host.mjs` 会自己从 `codexpets.net` 下载 fixture，然后覆盖 ZIP 解析、图库抓取、
+安装/卸载、路径穿越防护与线上图库请求。`test-client.mjs` 用宿主实际使用的 React
+物化浏览器产物，分别按两代会话目录结构渲染悬浮层，并用脏数据验证兼容层
+（导出为 `__compat`）。
+
+真正验证一次改动需要打开页面，而不只是渲染：启动目标 profile
+（`dsh --profile <name> --port 3030 --no-open`），用无头浏览器加载，并检查控制台
+是否出现 `slot entry crashed in 'shell.overlay'`。这条信息是悬浮层插件必须避开的
+失败模式。
 
 ## 致谢
 
